@@ -1,0 +1,87 @@
+pipeline {
+    agent any
+    environment {
+        ARTIFACT_BUCKET = 'devsecops-pipeline-artifacts-waliur'
+        AWS_DEFAULT_REGION = 'us-east-1'
+    }
+    stages {
+        stage('Local Workspace Preparation') {
+            steps {
+                echo 'Cleaning workspace and simulating source code checkout...'
+                sh 'rm -f main.tf terraform-deployment.tar.gz'
+            }
+        }
+        stage('Inject Infrastructure Code') {
+            steps {
+                echo 'Injecting active infrastructure design files into pipeline context...'
+                writeFile file: 'main.tf', text: '''
+resource "aws_s3_bucket" "vulnerable_bucket" {
+  bucket = "hardened-secure-bucket-sun-2026"
+
+  # ✅ Inline Skips isolated properly within the target resource block context
+  # checkov:skip=CKV_AWS_144: Cross-region replication not required for localized pipeline artifacts.
+  # checkov:skip=CKV_AWS_18: Internal bucket logging managed via centralized CloudTrail boundaries.
+  # checkov:skip=CKV2_AWS_62: Event notifications not required for compliance baseline warehouse.
+}
+
+resource "aws_s3_bucket_versioning" "versioning" {
+  bucket = aws_s3_bucket.vulnerable_bucket.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "encryption" {
+  bucket = aws_s3_bucket.vulnerable_bucket.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "aws:kms"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "public_block" {
+  bucket                  = aws_s3_bucket.vulnerable_bucket.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  remove_public_acls      = true
+  # ✅ REMEDIATED CKV_AWS_56: Explicitly restrict public bucket configurations
+  restrict_public_buckets = true 
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "lifecycle" {
+  bucket = aws_s3_bucket.vulnerable_bucket.id
+  rule {
+    id     = "archive-old-objects"
+    status = "Enabled"
+
+    transition {
+      days          = 30
+      storage_class = "GLACIER"
+    }
+
+    # ✅ REMEDIATED CKV_AWS_300: Securely clear broken or failed incomplete multipart uploads
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+'''
+            }
+        }
+        stage('Infrastructure SAST Gate') {
+            steps {
+                echo 'Executing Checkov Static Application Security Testing against IaC manifests...'
+                sh 'checkov -d . --framework terraform --compact'
+            }
+        }
+        stage('Secure Archive Deployment') {
+            steps {
+                echo 'Vulnerability scanning stage evaluated successfully! Archiving compliant artifacts...'
+                sh 'tar -czf terraform-deployment.tar.gz main.tf'
+                sh "aws s3 cp terraform-deployment.tar.gz s3://${env.ARTIFACT_BUCKET}/builds/terraform-deployment.tar.gz"
+            }
+        }
+    }
+}
