@@ -42,7 +42,8 @@ Traditional infrastructure provisioning relies heavily on manual security review
 
 ## Architecture Diagram
 
-[Placeholder: Architecture Diagram showing Local Commit -> Jenkins EC2 -> Checkov Scan -> IAM Profile Auth -> S3 Encrypted Upload]
+<img width="1169" height="827" alt="Architecture Diagram" src="https://github.com/user-attachments/assets/00348292-d67c-4388-9e51-4fcafdd42ba2" />
+
 
 ## Project Procedure
 
